@@ -14,18 +14,22 @@ import java.util.Base64;
 import java.util.List;
 
 public class SASAzureTransferChunks {
+    private static final int CHUNK_SIZE = 4 * 1024 * 1024; // 4MB
+
     private static final String SOURCE_STORAGE_CONNECTION_STRING = System.getenv("AZURE_STORAGE_CONNECTION_STRING");
     private static final String DEST_STORAGE_CONNECTION_STRING = System.getenv("AZURE_STORAGE_CONNECTION_STRING_TARGET");
 
     public static void main(String[] args) throws Exception {
+        long startTime = System.currentTimeMillis();
+
         String storageAccountNameSource = getAccountNameFromConnectionString(SOURCE_STORAGE_CONNECTION_STRING);
         String storageAccountKeySource = getAccountKeyFromConnectionString(SOURCE_STORAGE_CONNECTION_STRING);
         String storageAccountNameTarget = getAccountNameFromConnectionString(DEST_STORAGE_CONNECTION_STRING);
         String storageAccountKeyTarget = getAccountKeyFromConnectionString(DEST_STORAGE_CONNECTION_STRING);
         String sourceContainerName = "large-blob";
         String destinationContainerName = "target-container";
-        String sourceBlobName = "UniversityTimeTable.jpeg";
-        String destinationBlobName = "UniversityTimeTable.jpeg";
+        String sourceBlobName = "RStudio-2023.12.1-402.dmg";
+        String destinationBlobName = "RStudio-2023.12.1-402.dmg";
 
         // Create StorageSharedKeyCredential
         StorageSharedKeyCredential credentialSource = new StorageSharedKeyCredential(storageAccountNameSource, storageAccountKeySource);
@@ -61,6 +65,10 @@ public class SASAzureTransferChunks {
         InputStream blobInputStream = getBlob(sourceBlobUrl);
         transferBlobInChunks(destinationBlobUrl, blobInputStream);
         System.out.println("Blob transfer completed successfully.");
+        long endTime = System.currentTimeMillis();
+
+        // Print total time taken
+        System.out.println("Total time taken: " + (endTime - startTime) / 60000.0 + " minutes");
     }
 
     private static String generateSasToken(BlobServiceClient blobServiceClient, String containerName, BlobSasPermission permissions) {
@@ -91,21 +99,31 @@ public class SASAzureTransferChunks {
     }
 
     private static void transferBlobInChunks(String blobUrl, InputStream blobInputStream) throws Exception {
-        int chunkSize = 4 * 1024 * 1024; // 4MB chunk size
-        byte[] buffer = new byte[chunkSize];
+        byte[] buffer = new byte[CHUNK_SIZE];
         int bytesRead;
         int blockIdCount = 0;
         List<String> blockIds = new ArrayList<>();
 
-        while ((bytesRead = blobInputStream.read(buffer)) != -1) {
+        while ((bytesRead = readFully(blobInputStream, buffer, CHUNK_SIZE)) > 0) {
             String blockId = Base64.getEncoder().encodeToString(String.format("%05d", blockIdCount).getBytes());
             blockIds.add(blockId);
             uploadBlock(blobUrl, buffer, bytesRead, blockId);
+            System.out.println("Block id count " + blockIdCount + ": " + bytesRead + " bytes");
             blockIdCount++;
         }
 
         commitBlocks(blobUrl, blockIds);
     }
+
+    private static int readFully(InputStream input, byte[] buffer, int chunkSize) throws Exception {
+        int totalBytesRead = 0;
+        int bytesRead;
+        while (totalBytesRead < chunkSize && (bytesRead = input.read(buffer, totalBytesRead, chunkSize - totalBytesRead)) != -1) {
+            totalBytesRead += bytesRead;
+        }
+        return totalBytesRead;
+    }
+
 
     private static void uploadBlock(String blobUrl, byte[] data, int dataLength, String blockId) throws Exception {
         String blockUrl = blobUrl + "&comp=block&blockid=" + blockId;
